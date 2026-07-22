@@ -124,6 +124,7 @@ struct Params {
     include: Option<String>,
     exclude: Option<String>,
     limit: Option<usize>,
+    format: Option<String>, // ← НОВОЕ: "yaml" или пусто
 }
 
 // =================== ПАРСЕРЫ ===================
@@ -449,6 +450,312 @@ fn safe_regex(pattern: &str) -> Option<Regex> {
     Regex::new(&format!("(?i){}", pattern)).ok()
 }
 
+fn nodes_to_yaml(nodes: &[String]) -> String {
+    let mut out = String::from("proxies:\n");
+    for uri in nodes {
+        if let Some(node) = parse_uri_back(uri) {
+            out.push_str(&node_to_yaml(&node));
+        }
+    }
+    out
+}
+
+// Парсит URI обратно в Node (для генерации YAML)
+fn parse_uri_back(uri: &str) -> Option<Node> {
+    let proto_end = uri.find("://")?;
+    let proto = &uri[..proto_end];
+    let rest = &uri[proto_end + 3..];
+
+    let mut node = Node::default();
+    node.r#type = proto.to_string();
+
+    // ВАЖНО: сначала отделяем #name от основного тела URI
+    let (body, name_part) = if let Some(hash_idx) = rest.rfind('#') {
+        (&rest[..hash_idx], Some(&rest[hash_idx + 1..]))
+    } else {
+        (rest, None)
+    };
+
+    if let Some(name) = name_part {
+        node.name = urlencoding::decode(name).unwrap_or_default().to_string();
+    }
+
+    match proto {
+        "vless" | "trojan" | "tuic" => {
+            let (auth, host_part) = body.split_once('@')?;
+            let (host_port, query) = host_part.split_once('?').unwrap_or((host_part, ""));
+            let (server, port) = host_port.rsplit_once(':')?;
+
+            // Чистим от мусора
+            let port_clean: String = port.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if port_clean.is_empty() {
+                return None;
+            }
+
+            let auth_decoded = urlencoding::decode(auth).unwrap_or_default().to_string();
+            node.uuid = auth_decoded.clone();
+            if proto == "trojan" || proto == "tuic" {
+                node.password = auth_decoded;
+            }
+            node.server = server.to_string();
+            node.port = port_clean;
+
+            for param in query.split('&') {
+                if let Some((k, v)) = param.split_once('=') {
+                    let v = urlencoding::decode(v).unwrap_or_default().to_string();
+                    // Чистим значения от # и переносов строк
+                    let v = v.split('#').next().unwrap_or("").trim().to_string();
+                    if v.is_empty() {
+                        continue;
+                    }
+
+                    match k {
+                        "sni" | "servername" => node.sni = v,
+                        "fp" => node.fp = v,
+                        "pbk" => node.pbk = v,
+                        "sid" => node.sid = v,
+                        "alpn" => node.alpn = v,
+                        "flow" => node.flow = v,
+                        "security" => node.security = v,
+                        "type" => node.network = v,
+                        "host" => node.host = v,
+                        "path" => node.path = v,
+                        "password" => node.password = v,
+                        "congestion_control" => node.congestion_controller = v,
+                        "encryption" => node.encryption = v,
+                        _ => {}
+                    }
+                }
+            }
+
+            // Валидация UUID для vless/tuic
+            if proto == "vless" || proto == "tuic" {
+                let uuid_clean = node.uuid.replace("-", "").to_lowercase();
+                if uuid_clean.len() != 32 || !uuid_clean.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return None; // Пропускаем невалидные ноды
+                }
+            }
+        }
+        "vmess" => {
+            let decoded = B64.decode(body).ok()?;
+            let json_str = String::from_utf8(decoded).ok()?;
+            let obj: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+
+            node.name = obj["ps"].as_str().unwrap_or("").to_string();
+            node.server = obj["add"].as_str().unwrap_or("").to_string();
+            node.port = obj["port"]
+                .as_str()
+                .or_else(|| obj["port"].as_i64().map(|_| ""))
+                .unwrap_or("443")
+                .to_string();
+            if node.port.is_empty() {
+                node.port = obj["port"].as_i64().unwrap_or(443).to_string();
+            }
+            node.uuid = obj["id"].as_str().unwrap_or("").to_string();
+            node.alter_id = obj["aid"]
+                .as_str()
+                .or_else(|| obj["aid"].as_i64().map(|_| ""))
+                .unwrap_or("0")
+                .to_string();
+            if node.alter_id.is_empty() {
+                node.alter_id = obj["aid"].as_i64().unwrap_or(0).to_string();
+            }
+            node.network = obj["net"].as_str().unwrap_or("tcp").to_string();
+            node.host = obj["host"].as_str().unwrap_or("").to_string();
+            node.path = obj["path"].as_str().unwrap_or("").to_string();
+            node.tls = obj["tls"].as_str().unwrap_or("") == "tls";
+            node.sni = obj["sni"].as_str().unwrap_or("").to_string();
+        }
+        "ss" => {
+            let (auth, host_part) = body.split_once('@')?;
+            let (server, port) = host_part.rsplit_once(':')?;
+            let auth_decoded = B64.decode(auth).ok()?;
+            let auth_str = String::from_utf8(auth_decoded).ok()?;
+            let (method, pass) = auth_str.split_once(':')?;
+
+            node.cipher = method.to_string();
+            node.password = pass.to_string();
+            node.server = server.to_string();
+            node.port = port.chars().take_while(|c| c.is_ascii_digit()).collect();
+        }
+        "hysteria2" | "hy2" => {
+            node.r#type = "hysteria2".to_string();
+            let (pass, host_part) = body.split_once('@')?;
+            let (server, port) = host_part.rsplit_once(':')?;
+            node.password = urlencoding::decode(pass).unwrap_or_default().to_string();
+            node.server = server.to_string();
+            node.port = port.chars().take_while(|c| c.is_ascii_digit()).collect();
+        }
+        _ => return None,
+    }
+
+    // Финальная чистка servername от мусора
+    if node.sni.contains('#') {
+        node.sni = node.sni.split('#').next().unwrap_or("").to_string();
+    }
+
+    if node.server.is_empty() || node.port.is_empty() {
+        return None;
+    }
+
+    Some(node)
+}
+
+fn yaml_escape(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+    if s.contains(|c: char| {
+        c == ':'
+            || c == '#'
+            || c == '['
+            || c == ']'
+            || c == '{'
+            || c == '}'
+            || c == ','
+            || c == '"'
+            || c == '\''
+            || c == '\n'
+            || s.starts_with(' ')
+            || s.ends_with(' ')
+    }) {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn node_to_yaml(node: &Node) -> String {
+    let mut out = format!(
+        "  - name: {}\n    type: {}\n",
+        yaml_escape(&node.name),
+        yaml_escape(&node.r#type)
+    );
+    out.push_str(&format!("    server: {}\n", yaml_escape(&node.server)));
+    out.push_str(&format!("    port: {}\n", yaml_escape(&node.port)));
+
+    match node.r#type.as_str() {
+        "vless" => {
+            out.push_str(&format!("    uuid: {}\n", yaml_escape(&node.uuid)));
+            out.push_str(&format!("    network: {}\n", yaml_escape(&node.network)));
+            if !node.flow.is_empty() {
+                out.push_str(&format!("    flow: {}\n", yaml_escape(&node.flow)));
+            }
+            if !node.security.is_empty() {
+                out.push_str(&format!(
+                    "    tls: {}\n",
+                    if node.security == "tls" || node.security == "reality" {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                ));
+                out.push_str(&format!("    servername: {}\n", yaml_escape(&node.sni)));
+            }
+            if node.security == "reality" {
+                out.push_str("    reality-opts:\n");
+                out.push_str(&format!("      public-key: {}\n", yaml_escape(&node.pbk)));
+                if !node.sid.is_empty() {
+                    out.push_str(&format!("      short-id: {}\n", yaml_escape(&node.sid)));
+                }
+            }
+            if !node.fp.is_empty() {
+                out.push_str(&format!(
+                    "    client-fingerprint: {}\n",
+                    yaml_escape(&node.fp)
+                ));
+            }
+            match node.network.as_str() {
+                "ws" | "http" => {
+                    out.push_str(&format!("    {}-opts:\n", node.network));
+                    if !node.host.is_empty() {
+                        out.push_str(&format!("      host: {}\n", yaml_escape(&node.host)));
+                    }
+                    if !node.path.is_empty() {
+                        out.push_str(&format!("      path: {}\n", yaml_escape(&node.path)));
+                    }
+                }
+                "grpc" => {
+                    out.push_str("    grpc-opts:\n");
+                    out.push_str("      grpc-service-name: \"\"\n");
+                }
+                _ => {} // tcp, другие — ничего не добавляем
+            }
+        }
+        "vmess" => {
+            out.push_str(&format!("    uuid: {}\n", yaml_escape(&node.uuid)));
+            out.push_str(&format!("    alterId: {}\n", yaml_escape(&node.alter_id)));
+            out.push_str(&format!("    cipher: auto\n"));
+            out.push_str(&format!("    network: {}\n", yaml_escape(&node.network)));
+            out.push_str(&format!(
+                "    tls: {}\n",
+                if node.tls { "true" } else { "false" }
+            ));
+            if !node.sni.is_empty() {
+                out.push_str(&format!("    servername: {}\n", yaml_escape(&node.sni)));
+            }
+            match node.network.as_str() {
+                "ws" | "http" => {
+                    out.push_str(&format!("    {}-opts:\n", node.network));
+                    if !node.host.is_empty() {
+                        out.push_str(&format!("      host: {}\n", yaml_escape(&node.host)));
+                    }
+                    if !node.path.is_empty() {
+                        out.push_str(&format!("      path: {}\n", yaml_escape(&node.path)));
+                    }
+                }
+                "grpc" => {
+                    out.push_str("    grpc-opts:\n");
+                    out.push_str("      grpc-service-name: \"\"\n");
+                }
+                _ => {} // tcp, другие — ничего не добавляем
+            }
+        }
+        "trojan" => {
+            out.push_str(&format!("    password: {}\n", yaml_escape(&node.password)));
+            out.push_str("    tls: true\n");
+            if !node.sni.is_empty() {
+                out.push_str(&format!("    sni: {}\n", yaml_escape(&node.sni)));
+            }
+            if !node.network.is_empty() && node.network != "tcp" {
+                out.push_str(&format!("    network: {}\n", yaml_escape(&node.network)));
+            }
+            if !node.alpn.is_empty() {
+                let alpn_parts: Vec<&str> = node.alpn.split(',').collect();
+                out.push_str("    alpn:\n");
+                for part in alpn_parts {
+                    out.push_str(&format!("      - {}\n", yaml_escape(part.trim())));
+                }
+            }
+        }
+        "ss" => {
+            out.push_str(&format!("    cipher: {}\n", yaml_escape(&node.cipher)));
+            out.push_str(&format!("    password: {}\n", yaml_escape(&node.password)));
+        }
+        "hysteria2" => {
+            out.push_str(&format!("    password: {}\n", yaml_escape(&node.password)));
+            out.push_str("    skip-cert-verify: true\n");
+        }
+        "tuic" => {
+            out.push_str(&format!("    uuid: {}\n", yaml_escape(&node.uuid)));
+            if !node.password.is_empty() {
+                out.push_str(&format!("    password: {}\n", yaml_escape(&node.password)));
+            }
+            if !node.sni.is_empty() {
+                out.push_str(&format!("    sni: {}\n", yaml_escape(&node.sni)));
+            }
+            if !node.congestion_controller.is_empty() {
+                out.push_str(&format!(
+                    "    congestion-controller: {}\n",
+                    yaml_escape(&node.congestion_controller)
+                ));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 fn apply_filters(nodes: Vec<String>, p: &Params) -> Vec<String> {
     let mut out = nodes;
 
@@ -548,7 +855,21 @@ async fn handler(State(state): State<AppState>, Query(params): Query<Params>) ->
     let filtered = apply_filters(nodes, &params);
     let count = filtered.len();
 
-    // Стриминговый chunked ответ
+    // НОВОЕ: выбор формата ответа
+    let is_yaml = params.format.as_deref() == Some("yaml");
+
+    if is_yaml {
+        let yaml_content = nodes_to_yaml(&filtered);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/yaml;charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-store")
+            .header("X-Nodes-Count", count.to_string())
+            .body(Body::from(yaml_content))
+            .unwrap();
+    }
+
+    // Обычный текстовый формат (как было)
     let stream = stream::iter(
         filtered
             .into_iter()
