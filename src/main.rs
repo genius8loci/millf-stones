@@ -469,7 +469,6 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
     let mut node = Node::default();
     node.r#type = proto.to_string();
 
-    // ВАЖНО: сначала отделяем #name от основного тела URI
     let (body, name_part) = if let Some(hash_idx) = rest.rfind('#') {
         (&rest[..hash_idx], Some(&rest[hash_idx + 1..]))
     } else {
@@ -486,7 +485,6 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
             let (host_port, query) = host_part.split_once('?').unwrap_or((host_part, ""));
             let (server, port) = host_port.rsplit_once(':')?;
 
-            // Чистим от мусора
             let port_clean: String = port.chars().take_while(|c| c.is_ascii_digit()).collect();
             if port_clean.is_empty() {
                 return None;
@@ -503,7 +501,6 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
             for param in query.split('&') {
                 if let Some((k, v)) = param.split_once('=') {
                     let v = urlencoding::decode(v).unwrap_or_default().to_string();
-                    // Чистим значения от # и переносов строк
                     let v = v.split('#').next().unwrap_or("").trim().to_string();
                     if v.is_empty() {
                         continue;
@@ -513,7 +510,16 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
                         "sni" | "servername" => node.sni = v,
                         "fp" => node.fp = v,
                         "pbk" => node.pbk = v,
-                        "sid" => node.sid = v,
+                        "sid" => {
+                            // ВАЛИДАЦИЯ SHORT-ID: только hex, длина 0-16 (чётная)
+                            let sid_clean: String =
+                                v.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+                            let len = sid_clean.len();
+                            if len <= 16 && len % 2 == 0 {
+                                node.sid = sid_clean;
+                            }
+                            // Если невалидный — просто пропускаем это поле
+                        }
                         "alpn" => node.alpn = v,
                         "flow" => node.flow = v,
                         "security" => node.security = v,
@@ -532,7 +538,7 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
             if proto == "vless" || proto == "tuic" {
                 let uuid_clean = node.uuid.replace("-", "").to_lowercase();
                 if uuid_clean.len() != 32 || !uuid_clean.chars().all(|c| c.is_ascii_hexdigit()) {
-                    return None; // Пропускаем невалидные ноды
+                    return None;
                 }
             }
         }
@@ -589,7 +595,6 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
         _ => return None,
     }
 
-    // Финальная чистка servername от мусора
     if node.sni.contains('#') {
         node.sni = node.sni.split('#').next().unwrap_or("").to_string();
     }
@@ -605,7 +610,8 @@ fn yaml_escape(s: &str) -> String {
     if s.is_empty() {
         return String::new();
     }
-    if s.contains(|c: char| {
+
+    let needs_escape = s.contains(|c: char| {
         c == ':'
             || c == '#'
             || c == '['
@@ -616,9 +622,10 @@ fn yaml_escape(s: &str) -> String {
             || c == '"'
             || c == '\''
             || c == '\n'
-            || s.starts_with(' ')
-            || s.ends_with(' ')
-    }) {
+    }) || s.starts_with(' ')
+        || s.ends_with(' ');
+
+    if needs_escape {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         s.to_string()
@@ -653,10 +660,14 @@ fn node_to_yaml(node: &Node) -> String {
                 out.push_str(&format!("    servername: {}\n", yaml_escape(&node.sni)));
             }
             if node.security == "reality" {
-                out.push_str("    reality-opts:\n");
-                out.push_str(&format!("      public-key: {}\n", yaml_escape(&node.pbk)));
-                if !node.sid.is_empty() {
-                    out.push_str(&format!("      short-id: {}\n", yaml_escape(&node.sid)));
+                // Проверяем, что public-key не пустой
+                if !node.pbk.is_empty() {
+                    out.push_str("    reality-opts:\n");
+                    out.push_str(&format!("      public-key: {}\n", yaml_escape(&node.pbk)));
+                    // short-id записываем только если он валидный (не пустой)
+                    if !node.sid.is_empty() {
+                        out.push_str(&format!("      short-id: {}\n", yaml_escape(&node.sid)));
+                    }
                 }
             }
             if !node.fp.is_empty() {
