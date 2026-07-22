@@ -22,6 +22,8 @@ serde = { version = "1", features = ["derive"] }
 tower-http = { version = "0.5", features = ["cors"] }
 
 [profile.release]
-opt-level = 3
+opt-level = "z"          # Оптимизация под размер (вместо "3")
 lto = true
 codegen-units = 1
+panic = "abort"          # Убираем unwind tables (-10% размера)
+strip = true             # Удаляем debug symbols
