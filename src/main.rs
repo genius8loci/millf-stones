@@ -610,14 +610,16 @@ async fn main() {
 
 const LANDING_HTML: &str = r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VPN Sub Merger (Rust)</title>
+<link id="favicon" rel="icon" type="image/svg+xml">
+<title>VPN Sub Merger (millf-stones)</title>
 <style>body{font-family:system-ui;max-width:600px;margin:40px auto;padding:20px;background:#121212;color:#fff}
 input,textarea{width:100%;padding:10px;margin:10px 0;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-family:monospace;box-sizing:border-box}
+textarea{resize:vertical;min-height:100px}
 button{background:#0070f3;color:#fff;padding:12px 24px;border:none;border-radius:4px;cursor:pointer;width:100%}
 .result{background:#222;padding:10px;word-break:break-all;border-radius:4px;margin-top:20px}
 label{display:block;margin-top:10px;font-size:14px;color:#aaa}
 .hint{font-size:12px;color:#666;margin-top:-5px}</style></head>
-<body><h1>🚀 VPN Sub Merger (Rust)</h1>
+<body><h1>🚀 VPN Sub Merger (millf-stones)</h1>
 <label>Ссылки (через запятую или перенос строки):</label>
 <textarea id="urls" rows="4" placeholder="https://raw.../1.txt&#10;https://raw.../2.txt"></textarea>
 <label>Протоколы (vless,trojan,vmess):</label>
@@ -632,6 +634,15 @@ label{display:block;margin-top:10px;font-size:14px;color:#aaa}
 <button onclick="gen()">Сгенерировать ссылку</button>
 <div id="out" class="result" style="display:none"></div>
 <script>
+function updateFavicon() {
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const color = isDark ? '%23fff' : '%231C274C';
+  const svg = `%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cg opacity='.5'%3E%3Cpath d='M14 2.75c1.9068 0 3.2615.00159 4.2892.13976 1.006.13527 1.5857.38893 2.0089.81214.4871.48714.6992.86476.8166 1.53794.1324.75876.1353 1.84108.1353 3.75984 0 .41422.3358.75.75.75s.75-.33578.75-.75V8.90369c.0001-1.79919.0001-3.01798-.1576-3.9217-.1754-1.00534-.5492-1.65631-1.2336-2.34075C20.6104 1.89288 19.6615 1.56076 18.489 1.40314 17.3498 1.24997 15.8942 1.24998 14.0564 1.25H14c-.4142 0-.75.33579-.75.75s.3358.75.75.75Z' fill='${color}'/%3E%3Cpath d='M2 14.25c.41421 0 .75.3358.75.75 0 1.9191.00289 3.0014.13529 3.7602.11746.6731.32948 1.0508.81662 1.5379.42321.4232 1.00285.6769 2.00894.8121 1.02767.1382 2.38233.1398 4.28915.1398.4142 0 .75.3358.75.75s-.3358.75-.75.75h-.05641c-1.83776 0-3.29339 0-4.43261-.1531-1.17242-.1577-2.12137-.4898-2.86973-1.2381-.68444-.6845-1.05821-1.3355-1.23363-2.3408-.1577-.9037-.15767-2.1225-.15762-3.9216L2 15c0-.4142.33579-.75.75-.75Z' fill='${color}'/%3E%3Cpath d='M22 14.25c.4142 0 .75.3358.75.75v.0963c.0001 1.7992.0001 3.018-.1576 3.9217-.1754 1.0053-.5492 1.6563-1.2336 2.3408-.7484.7483-1.6973 1.0804-2.8698 1.2381-1.1392.1531-2.5948.1531-4.4326.1531H14c-.4142 0-.75-.3358-.75-.75s.3358-.75.75-.75c1.9068 0 3.2615-.0016 4.2892-.1398 1.006-.1352 1.5857-.3889 2.0089-.8121.4871-.4871.6992-.8648.8166-1.5379.1324-.7588.1353-1.8411.1353-3.7602 0-.4142.3358-.75.75-.75Z' fill='${color}'/%3E%3Cpath d='M9.94359 1.25H10c.4142 0 .75.33579.75.75s-.3358.75-.75.75c-1.90681 0-3.26148.00159-4.28915.13976-1.00609.13527-1.58573.38893-2.00894.81214-.48714.48714-.69916.86476-.81662 1.53794-.1324.75876-.13529 1.84108-.13529 3.75984 0 .41422-.3358.75-.75001.75-.41422 0-.75001-.33578-.75001-.75V8.90369c-.00005-1.79917-.00008-3.0179.15762-3.9217.17542-1.00534.54919-1.65631 1.23363-2.34075.74836-.74836 1.69731-1.08048 2.86973-1.2381C6.65019 1.24997 8.10584 1.24998 9.94359 1.25Z' fill='${color}'/%3E%3C/g%3E%3Cpath d='M12 10.75c-.6904 0-1.25.5596-1.25 1.25s.5596 1.25 1.25 1.25 1.25-.5596 1.25-1.25-.5596-1.25-1.25-1.25Z' fill='${color}'/%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M5.89243 14.0598C5.29747 13.3697 5 13.0246 5 12c0-1.0246.29748-1.3697.89242-2.05979C7.08037 8.56222 9.07268 7 12 7s4.9196 1.56222 6.1076 2.94021C18.7025 10.6303 19 10.9754 19 12c0 1.0246-.2975 1.3697-.8924 2.0598C16.9196 15.4378 14.9273 17 12 17s-4.91962-1.5622-6.10757-2.9402ZM9.25 12c0-1.5188 1.2312-2.75 2.75-2.75s2.75 1.2312 2.75 2.75-1.2312 2.75-2.75 2.75S9.25 13.5188 9.25 12Z' fill='${color}'/%3E%3C/svg%3E`;
+  document.getElementById('favicon').href = 'data:image/svg+xml,' + svg;
+}
+updateFavicon();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateFavicon);
+
 function gen(){
   const urls=document.getElementById('urls').value.split(/[\n,]/).map(u=>u.trim()).filter(Boolean).join(',');
   const types=document.getElementById('types').value;
