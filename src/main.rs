@@ -10,11 +10,13 @@ use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use bytes::Bytes;
 use futures::stream;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use reqwest::Client;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Write as _,
+    net::Ipv4Addr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -98,6 +100,7 @@ const YAML_KEYS: &[&str] = &[
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 const BATCH_SIZE: usize = 3;
 const REQ_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_BODY: usize = 5 * 1024 * 1024;
 
 #[derive(Debug, Default, Clone)]
 struct Node {
@@ -180,10 +183,12 @@ fn maybe_decode(mut text: String) -> String {
 }
 
 fn parse_yaml_value(line: &str) -> Option<(String, String)> {
-    let i = line.find(':')?;
-    let key = line[..i].trim().to_string();
-    let value = line[i + 1..].trim();
-    let value = value.trim_matches(|c| c == '\'' || c == '"').to_string();
+    let (key, value) = line.split_once(':')?;
+    let key = key.trim().to_string();
+    let value = value
+        .trim()
+        .trim_matches(|c| c == '\'' || c == '"')
+        .to_string();
     Some((key, value))
 }
 
@@ -204,9 +209,22 @@ fn parse_yaml(text: &str, seen: &mut HashSet<String>) -> Vec<String> {
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed == "proxies:" {
-            flush(&mut current, &mut results, seen);
-            in_proxies = true;
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Строка "верхнего уровня" — без отступа (ключ самого документа).
+        let is_top_level = !line.starts_with(' ') && !line.starts_with('\t');
+
+        if is_top_level {
+            if trimmed == "proxies:" {
+                flush(&mut current, &mut results, seen);
+                in_proxies = true;
+            } else if in_proxies {
+                // Началась другая секция верхнего уровня (proxy-groups, rules,
+                // dns и т.д.) — секция proxies: закончилась, перестаём её парсить.
+                flush(&mut current, &mut results, seen);
+                in_proxies = false;
+            }
             continue;
         }
         if !in_proxies {
@@ -271,7 +289,10 @@ fn parse_uris(text: &str, seen: &mut HashSet<String>) -> Vec<String> {
             if i < 2 {
                 continue;
             }
-            let proto = &line[..i];
+            let proto = match line.get(..i) {
+                Some(p) => p,
+                None => continue,
+            };
             if !is_valid_proto(proto) {
                 continue;
             }
@@ -402,18 +423,73 @@ fn build_uri(node: &Node) -> Option<String> {
     }
 }
 
+/// Базовая SSRF-защита: блокируем private, loopback, link-local и metadata IP.
+fn is_safe_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return false;
+    }
+    let after_scheme = lower.split("://").nth(1).unwrap_or("");
+    let host_port = after_scheme.split('/').next().unwrap_or("");
+    let host = host_port.split('@').next_back().unwrap_or("");
+    let host = if host.starts_with('[') {
+        host.split(']').next().unwrap_or("").trim_start_matches('[')
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+
+    const BLOCKED: &[&str] = &[
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "169.254.169.254",
+        "metadata.google.internal",
+    ];
+    if BLOCKED.contains(&host) {
+        return false;
+    }
+
+    if let Ok(ip) = host.parse::<Ipv4Addr>() {
+        let o = ip.octets();
+        if o[0] == 10
+            || (o[0] == 172 && (16..=31).contains(&o[1]))
+            || (o[0] == 192 && o[1] == 168)
+            || o[0] == 127
+            || (o[0] == 169 && o[1] == 254)
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
 async fn fetch_subscription(client: &Client, url: &str, seen: &mut HashSet<String>) -> Vec<String> {
-    let req = match client.get(url).timeout(REQ_TIMEOUT).send().await {
+    if !is_safe_url(url) {
+        tracing::warn!("Blocked potentially unsafe URL: {}", url);
+        return Vec::new();
+    }
+    let resp = match client.get(url).send().await {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
-    if !req.status().is_success() {
+    if !resp.status().is_success() {
         return Vec::new();
     }
-    let text = match req.text().await {
-        Ok(t) => t,
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
         Err(_) => return Vec::new(),
     };
+    if bytes.len() > MAX_BODY {
+        tracing::warn!(
+            "Response too large ({} bytes), skipping: {}",
+            bytes.len(),
+            url
+        );
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&bytes);
     parse_content(&text, seen)
 }
 
@@ -448,17 +524,19 @@ async fn fetch_all(client: &Client, urls: &[String]) -> Vec<String> {
 }
 
 fn get_node_name(uri: &str) -> String {
-    if let Some(i) = uri.rfind('#') {
-        urlencoding::decode(&uri[i + 1..])
-            .unwrap_or_default()
-            .to_string()
+    if let Some((_, after)) = uri.rsplit_once('#') {
+        urlencoding::decode(after).unwrap_or_default().to_string()
     } else {
         String::new()
     }
 }
 
 fn safe_regex(pattern: &str) -> Option<Regex> {
-    Regex::new(&format!("(?i){}", pattern)).ok()
+    RegexBuilder::new(&format!("(?i){}", pattern))
+        .size_limit(1 << 16)
+        .dfa_size_limit(1 << 18)
+        .build()
+        .ok()
 }
 
 /// Перемешивает ноды. Если задан seed — детерминированно (для отладки),
@@ -547,8 +625,10 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
     let proto = &uri[..proto_end];
     let rest = &uri[proto_end + 3..];
 
-    let mut node = Node::default();
-    node.r#type = proto.to_string();
+    let mut node = Node {
+        r#type: proto.to_string(),
+        ..Default::default()
+    };
 
     let (body, name_part) = if let Some(hash_idx) = rest.rfind('#') {
         (&rest[..hash_idx], Some(&rest[hash_idx + 1..]))
@@ -595,7 +675,7 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
                             let sid_clean: String =
                                 v.chars().filter(|c| c.is_ascii_hexdigit()).collect();
                             let len = sid_clean.len();
-                            if len <= 16 && len % 2 == 0 {
+                            if len <= 16 && len.is_multiple_of(2) {
                                 node.sid = sid_clean;
                             }
                         }
@@ -627,15 +707,10 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
 
             node.name = obj["ps"].as_str().unwrap_or("").to_string();
             node.server = obj["add"].as_str().unwrap_or("").to_string();
-            let port_val = obj["port"]
-                .as_str()
-                .or_else(|| obj["port"].as_i64().map(|_| ""))
-                .unwrap_or("443")
-                .to_string();
-            node.port = if port_val.is_empty() {
-                obj["port"].as_i64().unwrap_or(443).to_string()
-            } else {
-                port_val
+            node.port = match &obj["port"] {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => "443".to_string(),
             };
             node.uuid = obj["id"].as_str().unwrap_or("").to_string();
             let aid_val = obj["aid"]
@@ -703,8 +778,46 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
     Some(node)
 }
 
+/// Пишет ws-opts/http-opts. Схемы Mihomo различаются:
+/// ws-opts.headers — map строка->строка; http-opts.path и http-opts.headers.*
+/// обязаны быть списками, иначе Mihomo падает с "'http-opts.path' is not a slice".
+fn write_transport_opts(out: &mut String, network: &str, host: &str, path: &str) {
+    match network {
+        "ws" => {
+            if host.is_empty() && path.is_empty() {
+                return;
+            }
+            out.push_str("    ws-opts:\n");
+            if !path.is_empty() {
+                out.push_str(&format!("      path: {}\n", yaml_escape(path)));
+            }
+            if !host.is_empty() {
+                out.push_str("      headers:\n");
+                out.push_str(&format!("        Host: {}\n", yaml_escape(host)));
+            }
+        }
+        "http" => {
+            if host.is_empty() && path.is_empty() {
+                return;
+            }
+            out.push_str("    http-opts:\n");
+            if !path.is_empty() {
+                out.push_str("      path:\n");
+                out.push_str(&format!("        - {}\n", yaml_escape(path)));
+            }
+            if !host.is_empty() {
+                out.push_str("      headers:\n        Host:\n");
+                out.push_str(&format!("          - {}\n", yaml_escape(host)));
+            }
+        }
+        _ => {}
+    }
+}
+
 fn node_to_yaml(node: &Node) -> String {
-    let mut out = format!(
+    let mut out = String::with_capacity(512);
+    let _ = write!(
+        out,
         "  - name: {}\n    type: {}\n",
         yaml_escape(&node.name),
         yaml_escape(&node.r#type)
@@ -745,13 +858,7 @@ fn node_to_yaml(node: &Node) -> String {
             }
             match node.network.as_str() {
                 "ws" | "http" => {
-                    out.push_str(&format!("    {}-opts:\n", node.network));
-                    if !node.host.is_empty() {
-                        out.push_str(&format!("      host: {}\n", yaml_escape(&node.host)));
-                    }
-                    if !node.path.is_empty() {
-                        out.push_str(&format!("      path: {}\n", yaml_escape(&node.path)));
-                    }
+                    write_transport_opts(&mut out, &node.network, &node.host, &node.path);
                 }
                 "grpc" => {
                     out.push_str("    grpc-opts:\n");
@@ -774,13 +881,7 @@ fn node_to_yaml(node: &Node) -> String {
             }
             match node.network.as_str() {
                 "ws" | "http" => {
-                    out.push_str(&format!("    {}-opts:\n", node.network));
-                    if !node.host.is_empty() {
-                        out.push_str(&format!("      host: {}\n", yaml_escape(&node.host)));
-                    }
-                    if !node.path.is_empty() {
-                        out.push_str(&format!("      path: {}\n", yaml_escape(&node.path)));
-                    }
+                    write_transport_opts(&mut out, &node.network, &node.host, &node.path);
                 }
                 "grpc" => {
                     out.push_str("    grpc-opts:\n");
@@ -806,13 +907,7 @@ fn node_to_yaml(node: &Node) -> String {
             }
             match node.network.as_str() {
                 "ws" | "http" => {
-                    out.push_str(&format!("    {}-opts:\n", node.network));
-                    if !node.host.is_empty() {
-                        out.push_str(&format!("      host: {}\n", yaml_escape(&node.host)));
-                    }
-                    if !node.path.is_empty() {
-                        out.push_str(&format!("      path: {}\n", yaml_escape(&node.path)));
-                    }
+                    write_transport_opts(&mut out, &node.network, &node.host, &node.path);
                 }
                 "grpc" => {
                     out.push_str("    grpc-opts:\n");
@@ -857,7 +952,9 @@ fn node_to_yaml(node: &Node) -> String {
 // ============================================================
 
 fn generate_full_config(nodes: &[String]) -> String {
-    let mut config = String::from(MIHOMO_HEADER);
+    let estimated = MIHOMO_HEADER.len() + nodes.len() * 300 + 500;
+    let mut config = String::with_capacity(estimated);
+    config.push_str(MIHOMO_HEADER);
 
     // Секция proxies
     config.push_str("\nproxies:\n");
@@ -1063,10 +1160,27 @@ async fn main() {
         .build()
         .expect("failed to build reqwest client");
 
-    let state = AppState {
-        client,
-        cache: Arc::new(RwLock::new(HashMap::new())),
-    };
+    let cache = Arc::new(RwLock::new(HashMap::new()));
+
+    // Фоновая очистка просроченных записей кеша каждые 5 минут
+    {
+        let cache = Arc::clone(&cache);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let mut c = cache.write().await;
+                let before = c.len();
+                c.retain(|_, entry: &mut CacheEntry| entry.ts.elapsed() < CACHE_TTL);
+                let evicted = before - c.len();
+                if evicted > 0 {
+                    tracing::info!("Cache cleanup: evicted {} expired entries", evicted);
+                }
+            }
+        });
+    }
+
+    let state = AppState { client, cache };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -1087,7 +1201,17 @@ async fn main() {
     tracing::info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to listen for ctrl+c");
+    tracing::info!("Shutdown signal received");
 }
 
 const LANDING_HTML: &str = r#"<!DOCTYPE html>
@@ -1195,14 +1319,24 @@ function gen(){
   if(full)link+='&format=yaml';
   const out=document.getElementById('out');
   out.style.display='block';
-  const safeLink=link.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-  out.innerHTML='<strong>Готово:</strong>'
-    +'<div class="link-box"><a href="'+safeLink+'" target="_blank" rel="noopener">'+safeLink+'</a></div>'
-    +'<button class="copy-btn" id="copyBtn">📋 Скопировать</button>';
-  document.getElementById('copyBtn').onclick=function(){
+  out.textContent='';
+  const strong=document.createElement('strong');
+  strong.textContent='Готово:';
+  out.appendChild(strong);
+  const linkBox=document.createElement('div');
+  linkBox.className='link-box';
+  const a=document.createElement('a');
+  a.href=link;a.target='_blank';a.rel='noopener';a.textContent=link;
+  linkBox.appendChild(a);
+  out.appendChild(linkBox);
+  const btn=document.createElement('button');
+  btn.className='copy-btn';
+  btn.textContent='📋 Скопировать';
+  btn.onclick=function(){
     navigator.clipboard.writeText(link);
     this.textContent='✅ Скопировано';
     setTimeout(()=>{this.textContent='📋 Скопировать'},1500);
   };
+  out.appendChild(btn);
 }
 </script></body></html>"#;
