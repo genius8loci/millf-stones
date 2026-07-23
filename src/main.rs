@@ -6,7 +6,10 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::get,
 };
-use base64::{Engine, engine::general_purpose::STANDARD as B64};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL},
+};
 use bytes::Bytes;
 use futures::stream;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
@@ -70,6 +73,12 @@ const VALID_SS_CIPHERS: &[&str] = &[
 /// Mihomo поддерживает только "xtls-rprx-vision" (и пустой flow).
 /// Легаси-значения xray (xtls-rprx-direct/splice/origin) удалены из ядра
 /// ещё несколько лет назад и валят весь конфиг при парсинге.
+/// REALITY public-key — X25519-ключ, т.е. ровно 32 байта в base64url без
+/// паддинга. Битое значение Mihomo отвергает целиком вместе со всем конфигом.
+fn is_valid_reality_pbk(pbk: &str) -> bool {
+    B64URL.decode(pbk).map(|b| b.len() == 32).unwrap_or(false)
+}
+
 const VALID_VLESS_FLOWS: &[&str] = &["xtls-rprx-vision"];
 
 fn normalize_ss_cipher(cipher: &str) -> String {
@@ -113,6 +122,8 @@ const YAML_KEYS: &[&str] = &[
 ];
 
 const CACHE_TTL: Duration = Duration::from_secs(3600);
+const PROFILE_NAME: &str = "VPN millf-stones";
+const PROFILE_UPDATE_INTERVAL_HOURS: u32 = 24;
 const BATCH_SIZE: usize = 3;
 const REQ_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BODY: usize = 100 * 1024 * 1024;
@@ -868,7 +879,7 @@ fn node_to_yaml(node: &Node) -> String {
                     out.push_str(&format!("    servername: {}\n", yaml_escape(&node.sni)));
                 }
             }
-            if node.security == "reality" && !node.pbk.is_empty() {
+            if node.security == "reality" && is_valid_reality_pbk(&node.pbk) {
                 out.push_str("    reality-opts:\n");
                 out.push_str(&format!("      public-key: {}\n", yaml_escape(&node.pbk)));
                 if !node.sid.is_empty() {
@@ -1147,11 +1158,31 @@ async fn handler(State(state): State<AppState>, Query(params): Query<Params>) ->
     if is_yaml {
         // Возвращаем полноценный Mihomo-конфиг с ОДНОЙ url-test группой
         let full_config = generate_full_config(&filtered);
+
+        let title = match params.limit {
+            Some(l) if l > 0 => format!("{} ({})", PROFILE_NAME, l),
+            _ => PROFILE_NAME.to_string(),
+        };
+        let content_disposition = format!(
+            "attachment; filename*=UTF-8''{}",
+            urlencoding::encode(&title)
+        );
+
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/yaml;charset=utf-8")
             .header(header::CACHE_CONTROL, "no-store")
             .header("X-Nodes-Count", count.to_string())
+            .header(header::CONTENT_DISPOSITION, content_disposition)
+            .header("profile-title", title)
+            .header(
+                "Subscription-Userinfo",
+                "upload=0; download=0; total=1073741824000; expire=0",
+            )
+            .header(
+                "profile-update-interval",
+                PROFILE_UPDATE_INTERVAL_HOURS.to_string(),
+            )
             .body(Body::from(full_config))
             .unwrap();
     }
