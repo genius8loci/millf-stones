@@ -20,6 +20,7 @@ http-body-util = "0.1"
 urlencoding = "2"
 serde = { version = "1", features = ["derive"] }
 tower-http = { version = "0.5", features = ["cors"] }
+rand = "0.8"
 
 [profile.release]
 opt-level = "z"          # Оптимизация под размер (вместо "3")
