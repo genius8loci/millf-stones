@@ -41,6 +41,28 @@ const VALID_PROTOS: &[&str] = &[
     "ssh",
 ];
 
+const VALID_SS_CIPHERS: &[&str] = &[
+    "aes-128-gcm",
+    "aes-192-gcm",
+    "aes-256-gcm",
+    "chacha20-ietf-poly1305",
+    "xchacha20-ietf-poly1305",
+    "chacha20-poly1305",
+    "2022-blake3-aes-128-gcm",
+    "2022-blake3-aes-256-gcm",
+    "2022-blake3-chacha20-poly1305",
+    "aes-128-cfb",
+    "aes-192-cfb",
+    "aes-256-cfb",
+    "aes-128-ctr",
+    "aes-192-ctr",
+    "aes-256-ctr",
+    "chacha20-ietf",
+    "chacha20",
+    "rc4-md5",
+    "none",
+];
+
 const YAML_KEYS: &[&str] = &[
     "name",
     "type",
@@ -635,14 +657,29 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
         "ss" => {
             let (auth, host_part) = body.split_once('@')?;
             let (server, port) = host_part.rsplit_once(':')?;
-            let auth_decoded = B64.decode(auth).ok()?;
-            let auth_str = String::from_utf8(auth_decoded).ok()?;
+
+            // Основной формат SIP002: base64("method:password").
+            // Fallback: некоторые источники отдают "method:password" без base64.
+            let auth_str = match B64
+                .decode(auth)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+            {
+                Some(s) => s,
+                None => urlencoding::decode(auth).ok()?.to_string(),
+            };
             let (method, pass) = auth_str.split_once(':')?;
 
-            node.cipher = method.to_string();
+            node.cipher = method.to_lowercase();
             node.password = pass.to_string();
             node.server = server.to_string();
             node.port = port.chars().take_while(|c| c.is_ascii_digit()).collect();
+
+            // Битый cipher (например, случайно попавший туда протокол "ss")
+            // не должен ронять весь сгенерированный конфиг — пропускаем ноду.
+            if !VALID_SS_CIPHERS.contains(&node.cipher.as_str()) {
+                return None;
+            }
         }
         "hysteria2" | "hy2" => {
             node.r#type = "hysteria2".to_string();
@@ -825,12 +862,23 @@ fn generate_full_config(nodes: &[String]) -> String {
     // Секция proxies
     config.push_str("\nproxies:\n");
     let mut proxy_names: Vec<String> = Vec::new();
+    let mut name_counts: HashMap<String, u32> = HashMap::new();
 
     for uri in nodes {
-        if let Some(node) = parse_uri_back(uri) {
+        if let Some(mut node) = parse_uri_back(uri) {
             if node.name.is_empty() {
                 continue;
             }
+
+            // Mihomo требует уникальные имена прокси в списке — дублирующиеся
+            // имена (частый случай при слиянии нескольких подписок) иначе
+            // ломают парсинг всего конфига целиком.
+            let count = name_counts.entry(node.name.clone()).or_insert(0);
+            *count += 1;
+            if *count > 1 {
+                node.name = format!("{} #{}", node.name, count);
+            }
+
             let yaml = node_to_yaml(&node);
             config.push_str(&yaml);
             proxy_names.push(node.name);
@@ -1044,13 +1092,15 @@ async fn main() {
 
 const LANDING_HTML: &str = r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link id="favicon" rel="icon" type="image/svg+xml">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3Epath%7Bfill:%231C274C%7D@media(prefers-color-scheme:dark)%7Bpath%7Bfill:%23fff%7D%7D%3C/style%3E%3Cg opacity='.5'%3E%3Cpath d='M14 2.75c1.9068 0 3.2615.00159 4.2892.13976 1.006.13527 1.5857.38893 2.0089.81214.4871.48714.6992.86476.8166 1.53794.1324.75876.1353 1.84108.1353 3.75984 0 .41422.3358.75.75.75s.75-.33578.75-.75V8.90369c.0001-1.79919.0001-3.01798-.1576-3.9217-.1754-1.00534-.5492-1.65631-1.2336-2.34075C20.6104 1.89288 19.6615 1.56076 18.489 1.40314 17.3498 1.24997 15.8942 1.24998 14.0564 1.25H14c-.4142 0-.75.33579-.75.75s.3358.75.75.75Z'/%3E%3Cpath d='M2 14.25c.41421 0 .75.3358.75.75 0 1.9191.00289 3.0014.13529 3.7602.11746.6731.32948 1.0508.81662 1.5379.42321.4232 1.00285.6769 2.00894.8121 1.02767.1382 2.38233.1398 4.28915.1398.4142 0 .75.3358.75.75s-.3358.75-.75.75h-.05641c-1.83776 0-3.29339 0-4.43261-.1531-1.17242-.1577-2.12137-.4898-2.86973-1.2381-.68444-.6845-1.05821-1.3355-1.23363-2.3408-.1577-.9037-.15767-2.1225-.15762-3.9216L2 15c0-.4142.33579-.75.75-.75Z'/%3E%3Cpath d='M22 14.25c.4142 0 .75.3358.75.75v.0963c.0001 1.7992.0001 3.018-.1576 3.9217-.1754 1.0053-.5492 1.6563-1.2336 2.3408-.7484.7483-1.6973 1.0804-2.8698 1.2381-1.1392.1531-2.5948.1531-4.4326.1531H14c-.4142 0-.75-.3358-.75-.75s.3358-.75.75-.75c1.9068 0 3.2615-.0016 4.2892-.1398 1.006-.1352 1.5857-.3889 2.0089-.8121.4871-.4871.6992-.8648.8166-1.5379.1324-.7588.1353-1.8411.1353-3.7602 0-.4142.3358-.75.75-.75Z'/%3E%3Cpath d='M9.94359 1.25H10c.4142 0 .75.33579.75.75s-.3358.75-.75.75c-1.90681 0-3.26148.00159-4.28915.13976-1.00609.13527-1.58573.38893-2.00894.81214-.48714.48714-.69916.86476-.81662 1.53794-.1324.75876-.13529 1.84108-.13529 3.75984 0 .41422-.3358.75-.75001.75-.41422 0-.75001-.33578-.75001-.75V8.90369c-.00005-1.79917-.00008-3.0179.15762-3.9217.17542-1.00534.54919-1.65631 1.23363-2.34075.74836-.74836 1.69731-1.08048 2.86973-1.2381C6.65019 1.24997 8.10584 1.24998 9.94359 1.25Z'/%3E%3C/g%3E%3Cpath d='M12 10.75c-.6904 0-1.25.5596-1.25 1.25s.5596 1.25 1.25 1.25 1.25-.5596 1.25-1.25-.5596-1.25-1.25-1.25Z'/%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M5.89243 14.0598C5.29747 13.3697 5 13.0246 5 12c0-1.0246.29748-1.3697.89242-2.05979C7.08037 8.56222 9.07268 7 12 7s4.9196 1.56222 6.1076 2.94021C18.7025 10.6303 19 10.9754 19 12c0 1.0246-.2975 1.3697-.8924 2.0598C16.9196 15.4378 14.9273 17 12 17s-4.91962-1.5622-6.10757-2.9402ZM9.25 12c0-1.5188 1.2312-2.75 2.75-2.75s2.75 1.2312 2.75 2.75-1.2312 2.75-2.75 2.75S9.25 13.5188 9.25 12Z'/%3E%3C/svg%3E">
 <title>VPN Sub Merger (millf-stones)</title>
 <style>
 :root{--bg:#0b0c10;--card:#15171e;--card-2:#1b1e27;--border:#262a36;--text:#eef0f5;--muted:#8b90a3;--accent:#6366f1;--accent-2:#8b5cf6;--good:#22c55e}
 *{box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;max-width:640px;margin:0 auto;padding:32px 20px 60px;background:
-radial-gradient(1200px 600px at 50% -10%,rgba(99,102,241,.18),transparent),var(--bg);color:var(--text);line-height:1.4}
+html{background:var(--bg)}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;max-width:640px;margin:0 auto;padding:32px 20px 60px;
+background:radial-gradient(900px 500px at 50% 0%,rgba(99,102,241,.20),transparent 70%),var(--bg);
+background-repeat:no-repeat;background-attachment:fixed;background-position:top center;color:var(--text);line-height:1.4;min-height:100vh}
 h1{font-size:26px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
 .subtitle{color:var(--muted);font-size:14px;margin:0 0 28px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
@@ -1073,11 +1123,13 @@ cursor:pointer;width:100%;font-size:15px;font-weight:600;margin-top:20px;transit
 button:hover{filter:brightness(1.08)}
 button:active{transform:scale(.98)}
 .result{display:none;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-top:16px}
-.result strong{display:block;font-size:13px;color:var(--good);margin-bottom:8px}
-.result a{color:#a5b4fc;word-break:break-all;font-family:ui-monospace,monospace;font-size:13px;text-decoration:none}
+.result strong{display:block;font-size:13px;color:var(--good);margin-bottom:10px}
+.link-box{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:120px;overflow-y:auto}
+.result a{display:block;color:#a5b4fc;word-break:break-all;font-family:ui-monospace,monospace;font-size:13px;text-decoration:none}
 .result a:hover{text-decoration:underline}
-.copy-btn{margin-top:12px;background:var(--card-2);color:var(--text);border:1px solid var(--border);padding:8px 14px;border-radius:8px;
-font-size:12.5px;font-weight:600;width:auto;cursor:pointer}
+.copy-btn{display:block;margin-top:12px;background:var(--card-2);color:var(--text);border:1px solid var(--border);padding:10px 14px;border-radius:8px;
+font-size:12.5px;font-weight:600;width:100%;cursor:pointer;transition:filter .15s}
+.copy-btn:hover{filter:brightness(1.2)}
 footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 </style></head>
 <body>
@@ -1126,15 +1178,6 @@ footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
 
 <footer>millf-stones</footer>
 <script>
-function updateFavicon(){
-  const isDark=window.matchMedia('(prefers-color-scheme:dark)').matches;
-  const color=isDark?'%23fff':'%231C274C';
-  const svg=`%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cg opacity='.5'%3E%3Cpath d='M14 2.75c1.9068 0 3.2615.00159 4.2892.13976 1.006.13527 1.5857.38893 2.0089.81214.4871.48714.6992.86476.8166 1.53794.1324.75876.1353 1.84108.1353 3.75984 0 .41422.3358.75.75.75s.75-.33578.75-.75V8.90369c.0001-1.79919.0001-3.01798-.1576-3.9217-.1754-1.00534-.5492-1.65631-1.2336-2.34075C20.6104 1.89288 19.6615 1.56076 18.489 1.40314 17.3498 1.24997 15.8942 1.24998 14.0564 1.25H14c-.4142 0-.75.33579-.75.75s.3358.75.75.75Z' fill='${color}'/%3E%3Cpath d='M2 14.25c.41421 0 .75.3358.75.75 0 1.9191.00289 3.0014.13529 3.7602.11746.6731.32948 1.0508.81662 1.5379.42321.4232 1.00285.6769 2.00894.8121 1.02767.1382 2.38233.1398 4.28915.1398.4142 0 .75.3358.75.75s-.3358.75-.75.75h-.05641c-1.83776 0-3.29339 0-4.43261-.1531-1.17242-.1577-2.12137-.4898-2.86973-1.2381-.68444-.6845-1.05821-1.3355-1.23363-2.3408-.1577-.9037-.15767-2.1225-.15762-3.9216L2 15c0-.4142.33579-.75.75-.75Z' fill='${color}'/%3E%3Cpath d='M22 14.25c.4142 0 .75.3358.75.75v.0963c.0001 1.7992.0001 3.018-.1576 3.9217-.1754 1.0053-.5492 1.6563-1.2336 2.3408-.7484.7483-1.6973 1.0804-2.8698 1.2381-1.1392.1531-2.5948.1531-4.4326.1531H14c-.4142 0-.75-.3358-.75-.75s.3358-.75.75-.75c1.9068 0 3.2615-.0016 4.2892-.1398 1.006-.1352 1.5857-.3889 2.0089-.8121.4871-.4871.6992-.8648.8166-1.5379.1324-.7588.1353-1.8411.1353-3.7602 0-.4142.3358-.75.75-.75Z' fill='${color}'/%3E%3Cpath d='M9.94359 1.25H10c.4142 0 .75.33579.75.75s-.3358.75-.75.75c-1.90681 0-3.26148.00159-4.28915.13976-1.00609.13527-1.58573.38893-2.00894.81214-.48714.48714-.69916.86476-.81662 1.53794-.1324.75876-.13529 1.84108-.13529 3.75984 0 .41422-.3358.75-.75001.75-.41422 0-.75001-.33578-.75001-.75V8.90369c-.00005-1.79917-.00008-3.0179.15762-3.9217.17542-1.00534.54919-1.65631 1.23363-2.34075.74836-.74836 1.69731-1.08048 2.86973-1.2381C6.65019 1.24997 8.10584 1.24998 9.94359 1.25Z' fill='${color}'/%3E%3C/g%3E%3Cpath d='M12 10.75c-.6904 0-1.25.5596-1.25 1.25s.5596 1.25 1.25 1.25 1.25-.5596 1.25-1.25-.5596-1.25-1.25-1.25Z' fill='${color}'/%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M5.89243 14.0598C5.29747 13.3697 5 13.0246 5 12c0-1.0246.29748-1.3697.89242-2.05979C7.08037 8.56222 9.07268 7 12 7s4.9196 1.56222 6.1076 2.94021C18.7025 10.6303 19 10.9754 19 12c0 1.0246-.2975 1.3697-.8924 2.0598C16.9196 15.4378 14.9273 17 12 17s-4.91962-1.5622-6.10757-2.9402ZM9.25 12c0-1.5188 1.2312-2.75 2.75-2.75s2.75 1.2312 2.75 2.75-1.2312 2.75-2.75 2.75S9.25 13.5188 9.25 12Z' fill='${color}'/%3E%3C/svg%3E`;
-  document.getElementById('favicon').href='data:image/svg+xml,'+svg;
-}
-updateFavicon();
-window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',updateFavicon);
-
 function gen(){
   const urls=document.getElementById('urls').value.split(/[\n,]/).map(u=>u.trim()).filter(Boolean).join(',');
   const types=document.getElementById('types').value;
@@ -1152,7 +1195,14 @@ function gen(){
   if(full)link+='&format=yaml';
   const out=document.getElementById('out');
   out.style.display='block';
-  out.innerHTML='<strong>Готово:</strong><a href="'+link+'">'+link+'</a>'
-    +'<button class="copy-btn" onclick="navigator.clipboard.writeText(\''+link.replace(/'/g,"\\'")+'\')">📋 Скопировать</button>';
+  const safeLink=link.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  out.innerHTML='<strong>Готово:</strong>'
+    +'<div class="link-box"><a href="'+safeLink+'" target="_blank" rel="noopener">'+safeLink+'</a></div>'
+    +'<button class="copy-btn" id="copyBtn">📋 Скопировать</button>';
+  document.getElementById('copyBtn').onclick=function(){
+    navigator.clipboard.writeText(link);
+    this.textContent='✅ Скопировано';
+    setTimeout(()=>{this.textContent='📋 Скопировать'},1500);
+  };
 }
 </script></body></html>"#;
