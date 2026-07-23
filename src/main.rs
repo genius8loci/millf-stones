@@ -1271,128 +1271,286 @@ async fn shutdown_signal() {
 }
 
 const LANDING_HTML: &str = r#"<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3Epath%7Bfill:%231C274C%7D@media(prefers-color-scheme:dark)%7Bpath%7Bfill:%23fff%7D%7D%3C/style%3E%3Cg opacity='.5'%3E%3Cpath d='M14 2.75c1.9068 0 3.2615.00159 4.2892.13976 1.006.13527 1.5857.38893 2.0089.81214.4871.48714.6992.86476.8166 1.53794.1324.75876.1353 1.84108.1353 3.75984 0 .41422.3358.75.75.75s.75-.33578.75-.75V8.90369c.0001-1.79919.0001-3.01798-.1576-3.9217-.1754-1.00534-.5492-1.65631-1.2336-2.34075C20.6104 1.89288 19.6615 1.56076 18.489 1.40314 17.3498 1.24997 15.8942 1.24998 14.0564 1.25H14c-.4142 0-.75.33579-.75.75s.3358.75.75.75Z'/%3E%3Cpath d='M2 14.25c.41421 0 .75.3358.75.75 0 1.9191.00289 3.0014.13529 3.7602.11746.6731.32948 1.0508.81662 1.5379.42321.4232 1.00285.6769 2.00894.8121 1.02767.1382 2.38233.1398 4.28915.1398.4142 0 .75.3358.75.75s-.3358.75-.75.75h-.05641c-1.83776 0-3.29339 0-4.43261-.1531-1.17242-.1577-2.12137-.4898-2.86973-1.2381-.68444-.6845-1.05821-1.3355-1.23363-2.3408-.1577-.9037-.15767-2.1225-.15762-3.9216L2 15c0-.4142.33579-.75.75-.75Z'/%3E%3Cpath d='M22 14.25c.4142 0 .75.3358.75.75v.0963c.0001 1.7992.0001 3.018-.1576 3.9217-.1754 1.0053-.5492 1.6563-1.2336 2.3408-.7484.7483-1.6973 1.0804-2.8698 1.2381-1.1392.1531-2.5948.1531-4.4326.1531H14c-.4142 0-.75-.3358-.75-.75s.3358-.75.75-.75c1.9068 0 3.2615-.0016 4.2892-.1398 1.006-.1352 1.5857-.3889 2.0089-.8121.4871-.4871.6992-.8648.8166-1.5379.1324-.7588.1353-1.8411.1353-3.7602 0-.4142.3358-.75.75-.75Z'/%3E%3Cpath d='M9.94359 1.25H10c.4142 0 .75.33579.75.75s-.3358.75-.75.75c-1.90681 0-3.26148.00159-4.28915.13976-1.00609.13527-1.58573.38893-2.00894.81214-.48714.48714-.69916.86476-.81662 1.53794-.1324.75876-.13529 1.84108-.13529 3.75984 0 .41422-.3358.75-.75001.75-.41422 0-.75001-.33578-.75001-.75V8.90369c-.00005-1.79917-.00008-3.0179.15762-3.9217.17542-1.00534.54919-1.65631 1.23363-2.34075.74836-.74836 1.69731-1.08048 2.86973-1.2381C6.65019 1.24997 8.10584 1.24998 9.94359 1.25Z'/%3E%3C/g%3E%3Cpath d='M12 10.75c-.6904 0-1.25.5596-1.25 1.25s.5596 1.25 1.25 1.25 1.25-.5596 1.25-1.25-.5596-1.25-1.25-1.25Z'/%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M5.89243 14.0598C5.29747 13.3697 5 13.0246 5 12c0-1.0246.29748-1.3697.89242-2.05979C7.08037 8.56222 9.07268 7 12 7s4.9196 1.56222 6.1076 2.94021C18.7025 10.6303 19 10.9754 19 12c0 1.0246-.2975 1.3697-.8924 2.0598C16.9196 15.4378 14.9273 17 12 17s-4.91962-1.5622-6.10757-2.9402ZM9.25 12c0-1.5188 1.2312-2.75 2.75-2.75s2.75 1.2312 2.75 2.75-1.2312 2.75-2.75 2.75S9.25 13.5188 9.25 12Z'/%3E%3C/svg%3E">
-<title>VPN Sub Merger (millf-stones)</title>
-<style>
-:root{--bg:#0b0c10;--card:#15171e;--card-2:#1b1e27;--border:#262a36;--text:#eef0f5;--muted:#8b90a3;--accent:#6366f1;--accent-2:#8b5cf6;--good:#22c55e}
-*{box-sizing:border-box}
-html{background:var(--bg)}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;max-width:640px;margin:0 auto;padding:32px 20px 60px;
-background:radial-gradient(900px 500px at 50% 0%,rgba(99,102,241,.20),transparent 70%),var(--bg);
-background-repeat:no-repeat;background-attachment:fixed;background-position:top center;color:var(--text);line-height:1.4;min-height:100vh}
-h1{font-size:26px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
-.subtitle{color:var(--muted);font-size:14px;margin:0 0 28px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media(max-width:520px){.grid{grid-template-columns:1fr}}
-label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:14px 0 6px;letter-spacing:.02em}
-label:first-child{margin-top:0}
-input,textarea{width:100%;padding:11px 13px;background:var(--card-2);color:var(--text);border:1px solid var(--border);border-radius:10px;
-font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;transition:border-color .15s,box-shadow .15s;outline:none}
-input::placeholder,textarea::placeholder{color:#565b6e}
-input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,.2)}
-textarea{resize:vertical;min-height:96px}
-.hint{font-size:12px;color:var(--muted);margin-top:6px}
-.hint code{background:var(--card-2);padding:1px 6px;border-radius:5px;color:#c7c9e0}
-.check-row{display:flex;align-items:center;gap:10px;margin-top:16px;padding:12px 14px;background:var(--card-2);border:1px solid var(--border);border-radius:10px}
-.check-row input{width:18px;height:18px;accent-color:var(--accent)}
-.check-row span{font-size:13.5px;color:var(--text)}
-button{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;padding:14px 24px;border:none;border-radius:12px;
-cursor:pointer;width:100%;font-size:15px;font-weight:600;margin-top:20px;transition:transform .1s,filter .15s}
-button:hover{filter:brightness(1.08)}
-button:active{transform:scale(.98)}
-.result{display:none;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-top:16px}
-.result strong{display:block;font-size:13px;color:var(--good);margin-bottom:10px}
-.link-box{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:120px;overflow-y:auto}
-.result a{display:block;color:#a5b4fc;word-break:break-all;font-family:ui-monospace,monospace;font-size:13px;text-decoration:none}
-.result a:hover{text-decoration:underline}
-.copy-btn{display:block;margin-top:12px;background:var(--card-2);color:var(--text);border:1px solid var(--border);padding:10px 14px;border-radius:8px;
-font-size:12.5px;font-weight:600;width:100%;cursor:pointer;transition:filter .15s}
-.copy-btn:hover{filter:brightness(1.2)}
-footer{text-align:center;color:var(--muted);font-size:12px;margin-top:24px}
-</style></head>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3Epath%7Bfill:%231C274C%7D@media(prefers-color-scheme:dark)%7Bpath%7Bfill:%23fff%7D%7D%3C/style%3E%3Cg opacity='.5'%3E%3Cpath d='M14 2.75c1.9068 0 3.2615.00159 4.2892.13976 1.006.13527 1.5857.38893 2.0089.81214.4871.48714.6992.86476.8166 1.53794.1324.75876.1353 1.84108.1353 3.75984 0 .41422.3358.75.75.75s.75-.33578.75-.75V8.90369c.0001-1.79919.0001-3.01798-.1576-3.9217-.1754-1.00534-.5492-1.65631-1.2336-2.34075C20.6104 1.89288 19.6615 1.56076 18.489 1.40314 17.3498 1.24997 15.8942 1.24998 14.0564 1.25H14c-.4142 0-.75.33579-.75.75s.3358.75.75.75Z'/%3E%3Cpath d='M2 14.25c.41421 0 .75.3358.75.75 0 1.9191.00289 3.0014.13529 3.7602.11746.6731.32948 1.0508.81662 1.5379.42321.4232 1.00285.6769 2.00894.8121 1.02767.1382 2.38233.1398 4.28915.1398.4142 0 .75.3358.75.75s-.3358.75-.75.75h-.05641c-1.83776 0-3.29339 0-4.43261-.1531-1.17242-.1577-2.12137-.4898-2.86973-1.2381-.68444-.6845-1.05821-1.3355-1.23363-2.3408-.1577-.9037-.15767-2.1225-.15762-3.9216L2 15c0-.4142.33579-.75.75-.75Z'/%3E%3Cpath d='M22 14.25c.4142 0 .75.3358.75.75v.0963c.0001 1.7992.0001 3.018-.1576 3.9217-.1754 1.0053-.5492 1.6563-1.2336 2.3408-.7484.7483-1.6973 1.0804-2.8698 1.2381-1.1392.1531-2.5948.1531-4.4326.1531H14c-.4142 0-.75-.3358-.75-.75s.3358-.75.75-.75c1.9068 0 3.2615-.0016 4.2892-.1398 1.006-.1352 1.5857-.3889 2.0089-.8121.4871-.4871.6992-.8648.8166-1.5379.1324-.7588.1353-1.8411.1353-3.7602 0-.4142.3358-.75.75-.75Z'/%3E%3Cpath d='M9.94359 1.25H10c.4142 0 .75.33579.75.75s-.3358.75-.75.75c-1.90681 0-3.26148.00159-4.28915.13976-1.00609.13527-1.58573.38893-2.00894.81214-.48714.48714-.69916.86476-.81662 1.53794-.1324.75876-.13529 1.84108-.13529 3.75984 0 .41422-.3358.75-.75001.75-.41422 0-.75001-.33578-.75001-.75V8.90369c-.00005-1.79917-.00008-3.0179.15762-3.9217.17542-1.00534.54919-1.65631 1.23363-2.34075.74836-.74836 1.69731-1.08048 2.86973-1.2381C6.65019 1.24997 8.10584 1.24998 9.94359 1.25Z'/%3E%3C/g%3E%3Cpath d='M12 10.75c-.6904 0-1.25.5596-1.25 1.25s.5596 1.25 1.25 1.25 1.25-.5596 1.25-1.25-.5596-1.25-1.25-1.25Z'/%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M5.89243 14.0598C5.29747 13.3697 5 13.0246 5 12c0-1.0246.29748-1.3697.89242-2.05979C7.08037 8.56222 9.07268 7 12 7s4.9196 1.56222 6.1076 2.94021C18.7025 10.6303 19 10.9754 19 12c0 1.0246-.2975 1.3697-.8924 2.0598C16.9196 15.4378 14.9273 17 12 17s-4.91962-1.5622-6.10757-2.9402ZM9.25 12c0-1.5188 1.2312-2.75 2.75-2.75s2.75 1.2312 2.75 2.75-1.2312 2.75-2.75 2.75S9.25 13.5188 9.25 12Z'/%3E%3C/svg%3E">
+  <title>VPN Sub Merger (millf-stones)</title>
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --card: #15171e;
+      --card-2: #1b1e27;
+      --border: #262a36;
+      --text: #eef0f5;
+      --muted: #8b90a3;
+      --accent: #6366f1;
+      --accent-2: #8b5cf6;
+      --good: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+      background: radial-gradient(900px 500px at 50% 0%, rgba(99,102,241,.20), transparent 70%), var(--bg);
+      background-repeat: no-repeat;
+      background-attachment: fixed;
+      background-position: top center;
+      color: var(--text);
+      line-height: 1.4;
+      min-height: 100vh;
+    }
+    h1 {
+      font-size: 26px;
+      margin: 0 0 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0 0 28px;
+      text-align: center;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 520px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 14px 0 6px;
+      letter-spacing: .02em;
+    }
+    label:first-child { margin-top: 0; }
+    input, textarea {
+      width: 100%;
+      padding: 11px 13px;
+      background: var(--card-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13.5px;
+      transition: border-color .15s, box-shadow .15s;
+      outline: none;
+    }
+    input::placeholder, textarea::placeholder { color: #565b6e; }
+    input:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(99,102,241,.2);
+    }
+    textarea {
+      resize: vertical;
+      min-height: 96px;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .hint code {
+      background: var(--card-2);
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: #c7c9e0;
+    }
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+      padding: 12px 14px;
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .check-row input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+    }
+    .check-row span {
+      font-size: 13.5px;
+      color: var(--text);
+    }
+    button {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      padding: 14px 24px;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      width: 100%;
+      font-size: 15px;
+      font-weight: 600;
+      margin-top: 20px;
+      transition: transform .1s, filter .15s;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:active { transform: scale(.98); }
+    .result {
+      display: none;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+    .result strong {
+      display: block;
+      font-size: 13px;
+      color: var(--good);
+      margin-bottom: 10px;
+    }
+    .link-box {
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .result a {
+      display: block;
+      color: #a5b4fc;
+      word-break: break-all;
+      font-family: ui-monospace, monospace;
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .result a:hover { text-decoration: underline; }
+    .copy-btn {
+      display: block;
+      margin-top: 12px;
+      background: var(--card-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      width: 100%;
+      cursor: pointer;
+      transition: filter .15s;
+    }
+    .copy-btn:hover { filter: brightness(1.2); }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 24px;
+    }
+  </style>
+</head>
 <body>
-<h1>🚀 VPN Sub Merger</h1>
-<p class="subtitle">Объединение и фильтрация VPN-подписок в один список или Mihomo-конфиг</p>
+  <h1>🚀 VPN Sub Merger</h1>
+  <p class="subtitle">Объединение и фильтрация VPN-подписок в один список или Mihomo-конфиг</p>
 
-<div class="card">
-<label>Ссылки на подписки (через запятую или перенос строки)</label>
-<textarea id="urls" rows="4" placeholder="https://raw.../1.txt&#10;https://raw.../2.txt"></textarea>
+  <div class="card">
+    <label for="urls">Ссылки на подписки (через запятую или перенос строки)</label>
+    <textarea id="urls" rows="4" placeholder="https://raw.../1.txt&#10;https://raw.../2.txt"></textarea>
 
-<div class="grid">
-<div>
-<label>Протоколы</label>
-<input id="types" placeholder="vless,trojan,vmess — пусто = все">
-</div>
-<div>
-<label>Лимит нод</label>
-<input id="limit" type="number" min="0" placeholder="0 = без лимита">
-</div>
-</div>
+    <div class="grid">
+      <div>
+        <label for="types">Протоколы</label>
+        <input id="types" placeholder="vless,trojan,vmess — пусто = все">
+      </div>
+      <div>
+        <label for="limit">Лимит нод</label>
+        <input id="limit" type="number" min="0" placeholder="0 = без лимита">
+      </div>
+    </div>
 
-<div class="grid">
-<div>
-<label>🔍 Включить (regex)</label>
-<input id="include" placeholder="🇺🇸|🇩🇪|USA|Premium">
-</div>
-<div>
-<label>🚫 Исключить (regex)</label>
-<input id="exclude" placeholder="🇷🇺|⬇️|Россия|Trial">
-</div>
-</div>
-<div class="hint">Регистронезависимо. Примеры: <code>🇷🇺|⬇️</code>, <code>Premium</code></div>
+    <div class="grid">
+      <div>
+        <label for="include">🔍 Включить (regex)</label>
+        <input id="include" placeholder="🇺🇸|🇩🇪|USA|Premium">
+      </div>
+      <div>
+        <label for="exclude">🚫 Исключить (regex)</label>
+        <input id="exclude" placeholder="🇷🇺|⬇️|Россия|Trial">
+      </div>
+    </div>
+    <div class="hint">Регистронезависимо. Примеры: <code>🇷🇺|⬇️</code>, <code>Premium</code></div>
 
-<label>🎲 Seed (необязательно)</label>
-<input id="seed" type="number" placeholder="пусто = случайный порядок при каждом запросе">
-<div class="hint">Без seed ноды каждый раз перемешиваются случайно. С seed — детерминированно, удобно для отладки.</div>
+    <label for="seed">🎲 Seed (необязательно)</label>
+    <input id="seed" type="number" placeholder="пусто = случайный порядок при каждом запросе">
+    <div class="hint">Без seed ноды каждый раз перемешиваются случайно. С seed — детерминированно, удобно для отладки.</div>
 
-<div class="check-row">
-<input type="checkbox" id="fullconfig">
-<span>Полный Mihomo конфиг (DNS, TUN, правила)</span>
-</div>
+    <div class="check-row">
+      <input type="checkbox" id="fullconfig">
+      <span>Полный Mihomo конфиг (DNS, TUN, правила)</span>
+    </div>
 
-<button onclick="gen()">Сгенерировать ссылку</button>
-<div id="out" class="result"></div>
-</div>
+    <button onclick="gen()">Сгенерировать ссылку</button>
+    <div id="out" class="result"></div>
+  </div>
 
-<footer>millf-stones</footer>
-<script>
-function gen(){
-  const urls=document.getElementById('urls').value.split(/[\n,]/).map(u=>u.trim()).filter(Boolean).join(',');
-  const types=document.getElementById('types').value;
-  const include=document.getElementById('include').value;
-  const exclude=document.getElementById('exclude').value;
-  const limit=document.getElementById('limit').value;
-  const seed=document.getElementById('seed').value;
-  const full=document.getElementById('fullconfig').checked;
-  let link=location.origin+'/?urls='+encodeURIComponent(urls);
-  if(types)link+='&types='+encodeURIComponent(types);
-  if(include)link+='&include='+encodeURIComponent(include);
-  if(exclude)link+='&exclude='+encodeURIComponent(exclude);
-  if(limit)link+='&limit='+limit;
-  if(seed)link+='&seed='+seed;
-  if(full)link+='&format=yaml';
-  const out=document.getElementById('out');
-  out.style.display='block';
-  out.textContent='';
-  const strong=document.createElement('strong');
-  strong.textContent='Готово:';
-  out.appendChild(strong);
-  const linkBox=document.createElement('div');
-  linkBox.className='link-box';
-  const a=document.createElement('a');
-  a.href=link;a.target='_blank';a.rel='noopener';a.textContent=link;
-  linkBox.appendChild(a);
-  out.appendChild(linkBox);
-  const btn=document.createElement('button');
-  btn.className='copy-btn';
-  btn.textContent='📋 Скопировать';
-  btn.onclick=function(){
-    navigator.clipboard.writeText(link);
-    this.textContent='✅ Скопировано';
-    setTimeout(()=>{this.textContent='📋 Скопировать'},1500);
-  };
-  out.appendChild(btn);
-}
-</script></body></html>"#;
+  <footer>millf-stones</footer>
+
+  <script>
+    function gen(){
+      const urls = document.getElementById('urls').value.split(/[\n,]/).map(u => u.trim()).filter(Boolean).join(',');
+      const types = document.getElementById('types').value;
+      const include = document.getElementById('include').value;
+      const exclude = document.getElementById('exclude').value;
+      const limit = document.getElementById('limit').value;
+      const seed = document.getElementById('seed').value;
+      const full = document.getElementById('fullconfig').checked;
+      let link = location.origin + '/?urls=' + encodeURI(urls);
+      if (types) link += '&types=' + encodeURI(types);
+      if (include) link += '&include=' + encodeURI(include);
+      if (exclude) link += '&exclude=' + encodeURI(exclude);
+      if (limit) link += '&limit=' + limit;
+      if (seed) link += '&seed=' + seed;
+      if (full) link += '&format=yaml';
+      const out = document.getElementById('out');
+      out.style.display = 'block';
+      out.textContent = '';
+      const strong = document.createElement('strong');
+      strong.textContent = 'Готово:';
+      out.appendChild(strong);
+      const linkBox = document.createElement('div');
+      linkBox.className = 'link-box';
+      const a = document.createElement('a');
+      a.href = link;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = link;
+      linkBox.appendChild(a);
+      out.appendChild(linkBox);
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = '📋 Скопировать';
+      btn.onclick = function() {
+        navigator.clipboard.writeText(link);
+        this.textContent = '✅ Скопировано';
+        setTimeout(() => { this.textContent = '📋 Скопировать'; }, 1500);
+      };
+      out.appendChild(btn);
+    }
+  </script>
+</body>
+</html>"#;
