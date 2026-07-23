@@ -653,7 +653,23 @@ fn yaml_escape(s: &str) -> String {
     if s.is_empty() {
         return "\"\"".to_string();
     }
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\x{:02x}", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn parse_uri_back(uri: &str) -> Option<Node> {
