@@ -49,7 +49,6 @@ const VALID_SS_CIPHERS: &[&str] = &[
     "aes-256-gcm",
     "chacha20-ietf-poly1305",
     "xchacha20-ietf-poly1305",
-    "chacha20-poly1305",
     "2022-blake3-aes-128-gcm",
     "2022-blake3-aes-256-gcm",
     "2022-blake3-chacha20-poly1305",
@@ -64,6 +63,22 @@ const VALID_SS_CIPHERS: &[&str] = &[
     "rc4-md5",
     "none",
 ];
+
+/// Некоторые источники (shadowsocks-libev-стиль) отдают укороченные/устаревшие
+/// названия cipher, которых Mihomo (shadowsocks-rust) не знает под этим именем.
+/// Приводим их к каноничным именам, которые реально принимает Mihomo.
+/// Mihomo поддерживает только "xtls-rprx-vision" (и пустой flow).
+/// Легаси-значения xray (xtls-rprx-direct/splice/origin) удалены из ядра
+/// ещё несколько лет назад и валят весь конфиг при парсинге.
+const VALID_VLESS_FLOWS: &[&str] = &["xtls-rprx-vision"];
+
+fn normalize_ss_cipher(cipher: &str) -> String {
+    match cipher {
+        "chacha20-poly1305" => "chacha20-ietf-poly1305".to_string(),
+        "xchacha20-poly1305" => "xchacha20-ietf-poly1305".to_string(),
+        other => other.to_string(),
+    }
+}
 
 const YAML_KEYS: &[&str] = &[
     "name",
@@ -100,7 +115,7 @@ const YAML_KEYS: &[&str] = &[
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 const BATCH_SIZE: usize = 3;
 const REQ_TIMEOUT: Duration = Duration::from_secs(20);
-const MAX_BODY: usize = 5 * 1024 * 1024;
+const MAX_BODY: usize = 100 * 1024 * 1024;
 
 #[derive(Debug, Default, Clone)]
 struct Node {
@@ -477,6 +492,16 @@ async fn fetch_subscription(client: &Client, url: &str, seen: &mut HashSet<Strin
     if !resp.status().is_success() {
         return Vec::new();
     }
+    if let Some(len) = resp.content_length()
+        && len as usize > MAX_BODY
+    {
+        tracing::warn!(
+            "Response too large (Content-Length: {} bytes), skipping: {}",
+            len,
+            url
+        );
+        return Vec::new();
+    }
     let bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(_) => return Vec::new(),
@@ -745,7 +770,7 @@ fn parse_uri_back(uri: &str) -> Option<Node> {
             };
             let (method, pass) = auth_str.split_once(':')?;
 
-            node.cipher = method.to_lowercase();
+            node.cipher = normalize_ss_cipher(&method.to_lowercase());
             node.password = pass.to_string();
             node.server = server.to_string();
             node.port = port.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -829,7 +854,7 @@ fn node_to_yaml(node: &Node) -> String {
         "vless" => {
             out.push_str(&format!("    uuid: {}\n", yaml_escape(&node.uuid)));
             out.push_str(&format!("    network: {}\n", yaml_escape(&node.network)));
-            if !node.flow.is_empty() {
+            if VALID_VLESS_FLOWS.contains(&node.flow.as_str()) {
                 out.push_str(&format!("    flow: {}\n", yaml_escape(&node.flow)));
             }
             if !node.security.is_empty() {
