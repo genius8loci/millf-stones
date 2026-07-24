@@ -1039,11 +1039,10 @@ fn generate_full_config(nodes: &[String]) -> String {
         proxy_names.push("fallback-direct".to_string());
     }
 
-    // ОДНА select-группа со всеми прокси
+    // Группа прокси — настройки берутся из PROXY_GROUP_HEADER (см. выше),
+    // сюда просто дописывается список имён нод.
     config.push_str("\nproxy-groups:\n");
-    config.push_str("  - name: VPN\n");
-    config.push_str("    type: select\n");
-    config.push_str("    proxies:\n");
+    config.push_str(PROXY_GROUP_HEADER);
     for name in &proxy_names {
         config.push_str(&format!("      - {}\n", yaml_escape(name)));
     }
@@ -1058,20 +1057,22 @@ fn generate_full_config(nodes: &[String]) -> String {
 const MIHOMO_HEADER: &str = r#"mixed-port: 7890
 allow-lan: false
 mode: rule
-unified-delay: true
 log-level: warning
 ipv6: false
 tcp-concurrent: true
+enable-process: true
+unified-delay: true
+find-process-mode: always
+keep-alive-interval: 30
 external-controller: 127.0.0.1:9090
-profile:
-  store-selected: true
-  store-fake-ip: false
 
 tun:
   enable: true
-  stack: mixed
+  stack: gvisor
   dns-hijack:
     - 0.0.0.0:53
+    - any:53
+    - tcp://any:53
   auto-route: true
   auto-detect-interface: true
   strict-route: true
@@ -1083,9 +1084,26 @@ tun:
 dns:
   enable: true
   ipv6: true
+  prefer-h3: false
+  use-hosts: true
+  use-system-hosts: true
   listen: 0.0.0.0:1053
-  enhanced-mode: fake-ip
+  enhanced-mode: normal
   fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+  - +.lan
+  - +.local
+  - +.localhost
+  - +.msftconnecttest.com
+  - +.msftncsi.com
+  - dns.msftnsci.com
+  - captive.apple.com
+  - connectivitycheck.gstatic.com
+  - time.windows.com
+  - time.apple.com
+  - +.ntp.org
+  - +.stun.*.*
+  - +.stun.*.*.*
   default-nameserver:
     - 111.88.96.50
     - 111.88.96.51
@@ -1106,18 +1124,39 @@ dns:
     - tcp://1.1.1.1
     - tcp://8.8.8.8
 
+profile:
+  store-selected: true
+  store-fake-ip: true
+
 sniffer:
   enable: true
-  override-destination: true
+  force-dns-mapping: true
+  parse-pure-ip: true
   sniff:
-    TLS:
-      ports:
-        - 443
-        - 8443
     HTTP:
       ports:
         - 80
         - 8080-8880
+      override-destination: true
+    TLS:
+      ports:
+        - 443
+        - 8443
+    QUIC:
+      ports:
+        - 443
+"#;
+
+/// Настройки группы прокси. Правится только здесь — остальная логика
+/// (generate_full_config) просто дописывает список `proxies:` под этот блок.
+const PROXY_GROUP_HEADER: &str = r#"  - name: VPN
+    type: url-test
+    url: "http://cp.cloudflare.com/generate_204"
+    interval: 300
+    tolerance: 50
+    lazy: true
+    expected-status: 204
+    proxies:
 "#;
 
 // ============================================================
